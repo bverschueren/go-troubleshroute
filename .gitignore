@@ -1,0 +1,5 @@
+/go-troubleshroute
+/pki
+/bin
+[._]*.sw[a-z]
+[._]sw[a-z]
