@@ -16,16 +16,18 @@ type Config struct {
 	HttpListenPort  int    `envconfig:"HTTP_PORT" default:"80"`
 	TlsCert         string `envconfig:"TLS_CERT" default:"/usr/src/app/pki/tls.crt"`
 	TlsKey          string `envconfig:"TLS_KEY" default:"/usr/src/app/pki/tls.key"`
+	ServerTlsCert   string `envconfig:"SERVER_TLS_CERT" default:"/usr/src/app/pki/tls.crt"`
+	ServerTlsKey    string `envconfig:"SERVER_TLS_KEY" default:"/usr/src/app/pki/tls.key"`
 }
 
-func rootHandler(w http.ResponseWriter, req *http.Request) {
-	remoteAddress := req.RemoteAddr
-	fwdAddress := req.Header.Get("X-Forwarded-For")
-	resp := "Got / request from Connecting from %v"
+func rootHandler(w http.ResponseWriter, r *http.Request) {
+	remoteAddress := r.RemoteAddr
+	fwdAddress := r.Header.Get("X-Forwarded-For")
+	resp := "Got / request for %v from %v"
 	if len(fwdAddress) > 0 {
-		resp = fmt.Sprintf(resp+", forwarded by %v!\n", fwdAddress, remoteAddress)
+		resp = fmt.Sprintf(resp+", forwarded by %v!\n", r.Host, fwdAddress, remoteAddress)
 	} else {
-		resp = fmt.Sprintf(resp, remoteAddress)
+		resp = fmt.Sprintf(resp, r.Host, remoteAddress)
 	}
 	fmt.Fprintf(w, resp)
 }
@@ -54,7 +56,35 @@ func parseTlsConfig(c Config) *tls.Config {
 		log.Printf("Failed to load keypair [%s, %s]: %s", c.TlsCert, c.TlsKey, err)
 		return nil
 	}
-	return &tls.Config{Certificates: []tls.Certificate{cer}}
+	return &tls.Config{Certificates: []tls.Certificate{cer}, GetCertificate: returnCert(c)}
+}
+
+func returnCert(c Config) func(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	return func(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		log.Printf("SNI offered with ClientHelloInfo.ServerName=%v", helloInfo.ServerName)
+		var cer tls.Certificate
+		var err error
+		if len(helloInfo.ServerName) > 0 {
+			// if SNI is offered AND we have a certificate configured for it, load that.
+			log.Printf("Loading pki pair [%s, %s]", c.ServerTlsCert, c.ServerTlsKey)
+			cer, err = tls.LoadX509KeyPair(c.ServerTlsCert, c.ServerTlsKey)
+			if err != nil {
+				log.Printf("Failed to load keypair [%s, %s]: %s", c.ServerTlsCert, c.ServerTlsKey, err)
+				return nil, nil
+			}
+			return &cer, nil
+		} else {
+			// if no sni is offered we return the fallback/default certificate:
+			log.Printf("Loading pki pair [%s, %s]", c.TlsCert, c.TlsKey)
+			cer, err = tls.LoadX509KeyPair(c.TlsCert, c.TlsKey)
+			if err != nil {
+				log.Printf("Failed to load keypair [%s, %s]: %s", c.TlsCert, c.TlsKey, err)
+				return nil, nil
+			}
+			return &cer, nil
+		}
+		return nil, nil
+	}
 }
 
 func newHttpServer(c Config) *http.Server {
@@ -65,8 +95,9 @@ func newHttpServer(c Config) *http.Server {
 
 func newHttpsServer(c Config) *http.Server {
 	return &http.Server{
-		Addr:      ":" + strconv.Itoa(c.HttpsListenPort),
-		TLSConfig: parseTlsConfig(c),
+		Addr: ":" + strconv.Itoa(c.HttpsListenPort),
+		//		TLSConfig: parseTlsConfig(c),
+		TLSConfig: &tls.Config{GetCertificate: returnCert(c)},
 	}
 }
 
