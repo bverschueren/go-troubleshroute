@@ -4,11 +4,12 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"github.com/kelseyhightower/envconfig"
 	"log"
 	"net/http"
 	"strconv"
 	"sync"
+
+	"github.com/kelseyhightower/envconfig"
 )
 
 type Config struct {
@@ -23,11 +24,11 @@ type Config struct {
 func rootHandler(w http.ResponseWriter, r *http.Request) {
 	remoteAddress := r.RemoteAddr
 	fwdAddress := r.Header.Get("X-Forwarded-For")
-	resp := "Got / request for %v from %v"
+	resp := "Got %v request for %v from %v"
 	if len(fwdAddress) > 0 {
-		resp = fmt.Sprintf(resp+", forwarded by %v!\n", r.Host, fwdAddress, remoteAddress)
+		resp = fmt.Sprintf(resp+", forwarded by %v!\n", r.RequestURI, r.Host, fwdAddress, remoteAddress)
 	} else {
-		resp = fmt.Sprintf(resp, r.Host, remoteAddress)
+		resp = fmt.Sprintf(resp, r.RequestURI, r.Host, remoteAddress)
 	}
 	fmt.Fprintf(w, resp)
 }
