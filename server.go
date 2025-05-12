@@ -2,8 +2,10 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"strconv"
@@ -19,6 +21,7 @@ type Config struct {
 	TlsKey          string `envconfig:"TLS_KEY" default:"/usr/src/app/pki/tls.key"`
 	ServerTlsCert   string `envconfig:"SERVER_TLS_CERT" default:"/usr/src/app/pki/tls.crt"`
 	ServerTlsKey    string `envconfig:"SERVER_TLS_KEY" default:"/usr/src/app/pki/tls.key"`
+	ClientTlsCa     string `envconfig:"CLIENT_TLS_CA" default:""`
 }
 
 func rootHandler(w http.ResponseWriter, r *http.Request) {
@@ -95,10 +98,27 @@ func newHttpServer(c Config) *http.Server {
 }
 
 func newHttpsServer(c Config) *http.Server {
-	return &http.Server{
-		Addr: ":" + strconv.Itoa(c.HttpsListenPort),
-		//		TLSConfig: parseTlsConfig(c),
-		TLSConfig: &tls.Config{GetCertificate: returnCert(c)},
+	if c.ClientTlsCa == "" {
+		return &http.Server{
+			Addr:      ":" + strconv.Itoa(c.HttpsListenPort),
+			TLSConfig: &tls.Config{GetCertificate: returnCert(c)},
+		}
+	} else {
+		log.Print("Requiring Client Certificate.")
+		caCert, err := ioutil.ReadFile(c.ClientTlsCa)
+		if err != nil {
+			log.Fatal(err)
+		}
+		caCertPool := x509.NewCertPool()
+		caCertPool.AppendCertsFromPEM(caCert)
+		return &http.Server{
+			Addr: ":" + strconv.Itoa(c.HttpsListenPort),
+			TLSConfig: &tls.Config{
+				GetCertificate: returnCert(c),
+				ClientAuth:     tls.RequireAndVerifyClientCert,
+				ClientCAs:      caCertPool,
+			},
+		}
 	}
 }
 
