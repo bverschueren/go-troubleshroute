@@ -30,6 +30,9 @@ $(PKI_DIR):
 	openssl genrsa -out $(PKI_DIR)/tls.key 4096
 	openssl req -new -key $(PKI_DIR)/tls.key -out $(PKI_DIR)/server.csr -subj "/O=test/OU=Org/CN=$(CERT_CN)"
 	openssl x509 -req -in $(PKI_DIR)/server.csr  -CA $(PKI_DIR)/cacert.pem -CAkey $(PKI_DIR)/ca.key -out $(PKI_DIR)/tls.crt -CAcreateserial -days 365 -sha256
+	openssl genpkey -algorithm RSA -out $(PKI_DIR)/client.key
+	openssl req -new -key $(PKI_DIR)/client.key -out $(PKI_DIR)/client.csr -subj "/O=test/OU=Org/CN=HttpClient"
+	openssl x509 -req -in $(PKI_DIR)/client.csr -CA $(PKI_DIR)/cacert.pem -CAkey $(PKI_DIR)/ca.key -CAcreateserial -out $(PKI_DIR)/client.crt -days 365 -sha256
 
 run:	binary pki
 	go run server.go
@@ -52,7 +55,7 @@ ocp-reencrypt: pki
 	oc create secret tls go-troubleshroute-tls --key pki/tls.key --cert pki/tls.crt
 	oc create deployment go-troubleshroute --image=$(REGISTRY)/$(QUAY_NAMESPACE)/$(IMAGE):$(TAG)
 	oc set volume deployment/go-troubleshroute --mount-path=/usr/src/app/pki/ --secret-name=go-troubleshroute-tls --add
-	oc set env deployment/go-troubleshroute HTTPS_PORT=8443 HTTP_PORT=8080
+	oc set env deployment/go-troubleshroute HTTPS_PORT=8443 HTTP_PORT=8080 $(EXTRA_OPTS)
 	oc expose deployment/go-troubleshroute --target-port 8443 --port 443
 	oc create route reencrypt --dest-ca-cert=pki/cacert.pem --service=go-troubleshroute
 
@@ -60,6 +63,10 @@ ocp-passthrough: pki
 	oc create secret tls go-troubleshroute-tls --key pki/tls.key --cert pki/tls.crt
 	oc create deployment go-troubleshroute --image=$(REGISTRY)/$(QUAY_NAMESPACE)/$(IMAGE):$(TAG)
 	oc set volume deployment/go-troubleshroute --mount-path=/usr/src/app/pki/ --secret-name=go-troubleshroute-tls --add
-	oc set env deployment/go-troubleshroute HTTPS_PORT=8443 HTTP_PORT=8080
+	oc set env deployment/go-troubleshroute HTTPS_PORT=8443 HTTP_PORT=8080 $(EXTRA_OPTS)
 	oc expose deployment/go-troubleshroute --target-port 8443 --port 443
 	oc create route passthrough --service=go-troubleshroute
+
+ocp-passthrough-mtls: ocp-passthrough
+	oc set data secret/go-troubleshroute-tls --from-file=pki/cacert.pem
+	oc set env deployment/go-troubleshroute CLIENT_TLS_CA=/usr/src/app/pki/cacert.pem
